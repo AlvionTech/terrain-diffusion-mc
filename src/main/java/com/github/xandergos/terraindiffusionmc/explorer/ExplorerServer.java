@@ -134,7 +134,8 @@ public final class ExplorerServer {
             resp.put("scale", WorldScaleManager.getCurrentScale());
             sendJson(ex, 200, resp);
         } catch (Exception e) {
-            sendError(ex, 500, e.getMessage());
+            LOG.error("status error", e);
+            sendError(ex, 500, "Internal Server Error");
         }
     }
 
@@ -152,7 +153,8 @@ public final class ExplorerServer {
             resp.put("seed", Long.toUnsignedString(LocalTerrainProvider.getSeed()));
             sendJson(ex, 200, resp);
         } catch (Exception e) {
-            sendError(ex, 400, e.getMessage());
+            LOG.error("seed error", e);
+            sendError(ex, 400, "Internal Server Error");
         }
     }
 
@@ -165,7 +167,8 @@ public final class ExplorerServer {
             resp.put("seed", Long.toUnsignedString(newSeed));
             sendJson(ex, 200, resp);
         } catch (Exception e) {
-            sendError(ex, 400, e.getMessage());
+            LOG.error("new_seed error", e);
+            sendError(ex, 400, "Internal Server Error");
         }
     }
 
@@ -239,7 +242,7 @@ public final class ExplorerServer {
             ex.getResponseBody().write(png);
         } catch (Exception e) {
             LOG.error("coarse.png error", e);
-            sendError(ex, 400, e.getMessage());
+            sendError(ex, 400, "Internal Server Error");
         } finally {
             ex.close();
         }
@@ -268,7 +271,8 @@ public final class ExplorerServer {
             resp.put("channels", channels);
             sendJson(ex, 200, resp);
         } catch (Exception e) {
-            sendError(ex, 400, e.getMessage());
+            LOG.error("coarse_data error", e);
+            sendError(ex, 400, "Internal Server Error");
         }
     }
 
@@ -291,7 +295,8 @@ public final class ExplorerServer {
             }
             sendJson(ex, 200, stats);
         } catch (Exception e) {
-            sendError(ex, 400, e.getMessage());
+            LOG.error("coarse_stats error", e);
+            sendError(ex, 400, "Internal Server Error");
         }
     }
 
@@ -350,7 +355,7 @@ public final class ExplorerServer {
             ex.getResponseBody().write(png);
         } catch (Exception e) {
             LOG.error("detail.png error", e);
-            sendError(ex, 400, e.getMessage());
+            sendError(ex, 400, "Internal Server Error");
         } finally {
             ex.close();
         }
@@ -410,7 +415,7 @@ public final class ExplorerServer {
             ex.getResponseBody().write(payload);
         } catch (Exception e) {
             LOG.error("detail_raw error", e);
-            sendError(ex, 400, e.getMessage());
+            sendError(ex, 400, "Internal Server Error");
         } finally {
             ex.close();
         }
