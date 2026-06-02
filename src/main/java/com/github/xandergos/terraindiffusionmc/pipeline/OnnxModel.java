@@ -148,29 +148,31 @@ public final class OnnxModel implements AutoCloseable {
      */
     private void initializeModelSession(byte[] modelBytes, long startMillis) throws OrtException {
         if ("cpu".equals(TerrainDiffusionConfig.inferenceDevice())) {
-            OrtSession.SessionOptions sessionOptions = new OrtSession.SessionOptions();
-            sessionOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
-            this.cpuSession = env.createSession(modelBytes, sessionOptions);
-            this.gpuSession = null;
-            setResolvedProviderOnce("CPU");
-            LOG.info("ONNX model '{}' loaded on CPU ({} KB) in {} ms",
-                    name, modelBytes.length / 1024, System.currentTimeMillis() - startMillis);
-            return;
+            try (OrtSession.SessionOptions sessionOptions = new OrtSession.SessionOptions()) {
+                sessionOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+                this.cpuSession = env.createSession(modelBytes, sessionOptions);
+                this.gpuSession = null;
+                setResolvedProviderOnce("CPU");
+                LOG.info("ONNX model '{}' loaded on CPU ({} KB) in {} ms",
+                        name, modelBytes.length / 1024, System.currentTimeMillis() - startMillis);
+                return;
+            }
         }
         if (!TerrainDiffusionConfig.offloadModels()) {
-            OrtSession.SessionOptions sessionOptions = new OrtSession.SessionOptions();
-            sessionOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
-            addGpuProvider(sessionOptions);
-            if ("CoreML".equals(resolvedInferenceProvider)) {
-                throw new OrtException(
-                        "inference.offload_models=false is not supported with CoreML. " +
-                        "Set inference.offload_models=true in terrain-diffusion-mc.properties.");
+            try (OrtSession.SessionOptions sessionOptions = new OrtSession.SessionOptions()) {
+                sessionOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+                addGpuProvider(sessionOptions);
+                if ("CoreML".equals(resolvedInferenceProvider)) {
+                    throw new OrtException(
+                            "inference.offload_models=false is not supported with CoreML. " +
+                            "Set inference.offload_models=true in terrain-diffusion-mc.properties.");
+                }
+                this.gpuSession = env.createSession(modelBytes, sessionOptions);
+                this.cpuSession = null;
+                LOG.info("ONNX model '{}' loaded on GPU ({} KB) in {} ms",
+                        name, modelBytes.length / 1024, System.currentTimeMillis() - startMillis);
+                return;
             }
-            this.gpuSession = env.createSession(modelBytes, sessionOptions);
-            this.cpuSession = null;
-            LOG.info("ONNX model '{}' loaded on GPU ({} KB) in {} ms",
-                    name, modelBytes.length / 1024, System.currentTimeMillis() - startMillis);
-            return;
         }
         this.cpuSession = null;
         this.gpuSession = null;
@@ -284,12 +286,13 @@ public final class OnnxModel implements AutoCloseable {
         }
 
         try {
-            OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
-            opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
-            addGpuProvider(opts);
-            activeGpuSession = env.createSession(optimizedModelBytes, opts);
-            gpuSlotHolder = this;
-            LOG.debug("GPU session ready for '{}'", name);
+            try (OrtSession.SessionOptions opts = new OrtSession.SessionOptions()) {
+                opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+                addGpuProvider(opts);
+                activeGpuSession = env.createSession(optimizedModelBytes, opts);
+                gpuSlotHolder = this;
+                LOG.debug("GPU session ready for '{}'", name);
+            }
         } catch (OrtException e) {
             throw new RuntimeException("Failed to create GPU session for: " + name, e);
         }
