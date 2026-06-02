@@ -223,6 +223,9 @@ public final class LocalTerrainProvider {
         }
         try {
             return toRun.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Terrain tile interrupted: " + key, e);
         } catch (Exception e) {
             PENDING.remove(key);
             throw new RuntimeException("Terrain tile failed: " + key, e);
