@@ -61,6 +61,12 @@ public final class LocalTerrainProvider {
     private static record CacheKey(int i1, int j1, int i2, int j2) {}
     private static record CacheEntry(HeightmapData data, AtomicLong lastAccessed) {}
 
+    private static final class LastFetch {
+        int i1, j1, i2, j2;
+        HeightmapData data;
+    }
+    private static final ThreadLocal<LastFetch> LAST_FETCH = ThreadLocal.withInitial(LastFetch::new);
+
     private static final int MAX_CACHE_SIZE = 64;
     private static final int MAX_CACHE_SIZE_HEADROOM = 8;
     private static final Map<CacheKey, CacheEntry> CACHE = new ConcurrentHashMap<>();
@@ -181,14 +187,24 @@ public final class LocalTerrainProvider {
      * If the caller is the server or a chunk worker, the game will stall until this returns.
      */
     public HeightmapData fetchHeightmap(int i1, int j1, int i2, int j2) {
+        LastFetch last = LAST_FETCH.get();
+        if (last.data != null && last.i1 == i1 && last.j1 == j1 && last.i2 == i2 && last.j2 == j2) {
+            return last.data;
+        }
+
         CacheKey key = new CacheKey(i1, j1, i2, j2);
         CacheEntry cached = CACHE.get(key);
         if (cached != null) {
             cached.lastAccessed.set(CACHE_CLOCK.incrementAndGet());
+            last.i1 = i1; last.j1 = j1; last.i2 = i2; last.j2 = j2;
+            last.data = cached.data;
             return cached.data;
         }
 
-        return this.genHeightmap(key, i1, j1, i2, j2);
+        HeightmapData generated = this.genHeightmap(key, i1, j1, i2, j2);
+        last.i1 = i1; last.j1 = j1; last.i2 = i2; last.j2 = j2;
+        last.data = generated;
+        return generated;
     }
 
     private HeightmapData genHeightmap(CacheKey key, int i1, int j1, int i2, int j2) {
