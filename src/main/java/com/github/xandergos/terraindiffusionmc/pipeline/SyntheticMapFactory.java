@@ -195,7 +195,7 @@ public final class SyntheticMapFactory {
                 precipStd = precipStd * Math.max(0.0f, (185.0f - 0.04111f * precip) / 185.0f);
 
                 // Elevation: signed sqrt transform
-                float elevSqrt = (float) (Math.signum(elev) * Math.sqrt(Math.abs(elev)));
+                float elevSqrt = elev < 0 ? -(float)Math.sqrt(-elev) : (float)Math.sqrt(elev);
 
                 result[0][r][c] = elevSqrt;
                 result[1][r][c] = temp;
