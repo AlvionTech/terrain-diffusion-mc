@@ -335,8 +335,6 @@ public final class OnnxModel implements AutoCloseable {
 
         if (!added) {
             try {
-                // ENABLE_ON_SUBGRAPH: allow CoreML to handle partial graphs with CPU fallback
-                // for unsupported ops, maximising GPU utilisation without requiring full-graph support.
                 opts.addCoreML(EnumSet.of(CoreMLFlags.ENABLE_ON_SUBGRAPH));
                 added = true;
                 setResolvedProviderOnce("CoreML");
