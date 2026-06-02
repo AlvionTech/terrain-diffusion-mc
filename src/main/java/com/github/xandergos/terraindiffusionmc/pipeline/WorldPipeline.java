@@ -42,12 +42,20 @@ public final class WorldPipeline implements AutoCloseable {
     static final float[] COND_SNR  = WorldPipelineModelConfig.conditioningSnr();
     static final int COARSE_POOLING = WorldPipelineModelConfig.coarsePooling();
     static final float[] COND_VALS;  // log(COND_SNR / 8)
+    static final float[] COND_COS_T;
+    static final float[] COND_SIN_T;
     static {
         if (COARSE_POOLING != 1) {
             throw new IllegalStateException("coarse_pooling=" + COARSE_POOLING + " is not supported in the Java pipeline yet");
         }
         COND_VALS = new float[COND_SNR.length];
-        for (int i = 0; i < COND_SNR.length; i++) COND_VALS[i] = (float) Math.log(COND_SNR[i] / 8.0);
+        COND_COS_T = new float[COND_SNR.length];
+        COND_SIN_T = new float[COND_SNR.length];
+        for (int i = 0; i < COND_SNR.length; i++) {
+            COND_VALS[i] = (float) Math.log(COND_SNR[i] / 8.0);
+            COND_COS_T[i] = (float) Math.cos(Math.atan(COND_SNR[i]));
+            COND_SIN_T[i] = (float) Math.sin(Math.atan(COND_SNR[i]));
+        }
     }
 
     // mp_concat scales for 6 tensors of sizes [16, 16, 4, 16, 5, 1] → 58 total
@@ -161,8 +169,8 @@ public final class WorldPipeline implements AutoCloseable {
         // cond_img_mixed = cos(t_cond) * normalized + sin(t_cond) * noise
         float[] condMixed = new float[5 * S * S];
         for (int ch = 0; ch < 5; ch++) {
-            float cosT = (float) Math.cos(Math.atan(COND_SNR[ch]));
-            float sinT = (float) Math.sin(Math.atan(COND_SNR[ch]));
+            float cosT = COND_COS_T[ch];
+            float sinT = COND_SIN_T[ch];
             for (int px = 0; px < S * S; px++) {
                 condMixed[ch * S * S + px] = cosT * condImg[ch * S * S + px]
                         + sinT * condNoise[ch * S * S + px];
