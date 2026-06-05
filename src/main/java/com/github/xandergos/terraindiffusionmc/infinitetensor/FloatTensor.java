@@ -59,21 +59,67 @@ public class FloatTensor {
         }
         if (total == 0) return;
 
-        // Compute strides for iterating over the count-shaped region
-        int[] iterStrides = new int[n];
-        iterStrides[n - 1] = 1;
-        for (int d = n - 2; d >= 0; d--) {
-            iterStrides[d] = iterStrides[d + 1] * count[d + 1];
+        int dstBase = 0;
+        int srcBase = 0;
+        for (int d = 0; d < n; d++) {
+            dstBase += dstRegion[d][0] * strides[d];
+            srcBase += srcRegion[d][0] * src.strides[d];
         }
 
-        for (int flat = 0; flat < total; flat++) {
-            int dstFlat = 0, srcFlat = 0;
-            for (int d = 0; d < n; d++) {
-                int idx = (flat / iterStrides[d]) % count[d];
-                dstFlat += (dstRegion[d][0] + idx) * strides[d];
-                srcFlat += (srcRegion[d][0] + idx) * src.strides[d];
+        if (n == 3) {
+            int d0Count = count[0], d1Count = count[1], d2Count = count[2];
+            int d0DstStride = strides[0], d1DstStride = strides[1], d2DstStride = strides[2];
+            int d0SrcStride = src.strides[0], d1SrcStride = src.strides[1], d2SrcStride = src.strides[2];
+            for (int i0 = 0; i0 < d0Count; i0++) {
+                int dstFlat0 = dstBase + i0 * d0DstStride;
+                int srcFlat0 = srcBase + i0 * d0SrcStride;
+                for (int i1 = 0; i1 < d1Count; i1++) {
+                    int dstFlat1 = dstFlat0 + i1 * d1DstStride;
+                    int srcFlat1 = srcFlat0 + i1 * d1SrcStride;
+                    for (int i2 = 0; i2 < d2Count; i2++) {
+                        data[dstFlat1 + i2 * d2DstStride] += src.data[srcFlat1 + i2 * d2SrcStride];
+                    }
+                }
             }
-            data[dstFlat] += src.data[srcFlat];
+        } else if (n == 2) {
+            int d0Count = count[0], d1Count = count[1];
+            int d0DstStride = strides[0], d1DstStride = strides[1];
+            int d0SrcStride = src.strides[0], d1SrcStride = src.strides[1];
+            for (int i0 = 0; i0 < d0Count; i0++) {
+                int dstFlat0 = dstBase + i0 * d0DstStride;
+                int srcFlat0 = srcBase + i0 * d0SrcStride;
+                for (int i1 = 0; i1 < d1Count; i1++) {
+                    data[dstFlat0 + i1 * d1DstStride] += src.data[srcFlat0 + i1 * d1SrcStride];
+                }
+            }
+        } else if (n == 1) {
+            int d0Count = count[0];
+            int d0DstStride = strides[0];
+            int d0SrcStride = src.strides[0];
+            for (int i0 = 0; i0 < d0Count; i0++) {
+                data[dstBase + i0 * d0DstStride] += src.data[srcBase + i0 * d0SrcStride];
+            }
+        } else {
+            // N-dimensional fallback avoiding division and modulo per pixel
+            int[] current = new int[n];
+            int dstFlat = dstBase;
+            int srcFlat = srcBase;
+
+            for (int flat = 0; flat < total; flat++) {
+                data[dstFlat] += src.data[srcFlat];
+
+                for (int d = n - 1; d >= 0; d--) {
+                    current[d]++;
+                    dstFlat += strides[d];
+                    srcFlat += src.strides[d];
+                    if (current[d] < count[d]) {
+                        break;
+                    }
+                    current[d] = 0;
+                    dstFlat -= count[d] * strides[d];
+                    srcFlat -= count[d] * src.strides[d];
+                }
+            }
         }
     }
 
