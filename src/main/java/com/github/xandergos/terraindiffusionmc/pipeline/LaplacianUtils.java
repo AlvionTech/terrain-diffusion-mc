@@ -54,24 +54,47 @@ public final class LaplacianUtils {
     public static float[][] bilinearResize(float[][] src, int dstH, int dstW) {
         int srcH = src.length, srcW = src[0].length;
         float[][] dst = new float[dstH][dstW];
+
+        // Precalculate column interpolation variables to save repeated work inside the inner loop
+        int[] c0Arr = new int[dstW];
+        int[] c1Arr = new int[dstW];
+        float[] wcArr = new float[dstW];
+        float[] iwcArr = new float[dstW];
+
+        for (int c = 0; c < dstW; c++) {
+            float srcC = ((c + 0.5f) * srcW / dstW) - 0.5f;
+            int c0 = (int) Math.floor(srcC);
+            int c1 = c0 + 1;
+            float wc = srcC - c0;
+            wcArr[c] = wc;
+            iwcArr[c] = 1.0f - wc;
+            c0Arr[c] = Math.max(0, Math.min(srcW - 1, c0));
+            c1Arr[c] = Math.max(0, Math.min(srcW - 1, c1));
+        }
+
         for (int r = 0; r < dstH; r++) {
             float srcR = ((r + 0.5f) * srcH / dstH) - 0.5f;
             int r0 = (int) Math.floor(srcR);
             int r1 = r0 + 1;
             float wr = srcR - r0;
+            float iwr = 1.0f - wr;
+
             r0 = Math.max(0, Math.min(srcH - 1, r0));
             r1 = Math.max(0, Math.min(srcH - 1, r1));
+
+            // Extract 1D row references to avoid 2D array lookups in inner loop
+            float[] srcRow0 = src[r0];
+            float[] srcRow1 = src[r1];
+            float[] dstRow = dst[r];
+
             for (int c = 0; c < dstW; c++) {
-                float srcC = ((c + 0.5f) * srcW / dstW) - 0.5f;
-                int c0 = (int) Math.floor(srcC);
-                int c1 = c0 + 1;
-                float wc = srcC - c0;
-                c0 = Math.max(0, Math.min(srcW - 1, c0));
-                c1 = Math.max(0, Math.min(srcW - 1, c1));
-                dst[r][c] = (1 - wr) * (1 - wc) * src[r0][c0]
-                        + (1 - wr) * wc * src[r0][c1]
-                        + wr * (1 - wc) * src[r1][c0]
-                        + wr * wc * src[r1][c1];
+                int c0 = c0Arr[c];
+                int c1 = c1Arr[c];
+                float wc = wcArr[c];
+                float iwc = iwcArr[c];
+
+                dstRow[c] = iwr * (iwc * srcRow0[c0] + wc * srcRow0[c1])
+                          + wr  * (iwc * srcRow1[c0] + wc * srcRow1[c1]);
             }
         }
         return dst;
