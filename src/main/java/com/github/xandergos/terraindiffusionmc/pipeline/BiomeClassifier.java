@@ -62,43 +62,58 @@ public final class BiomeClassifier {
             return out;
         }
 
-        // Generate Perlin noise perturbations
-        float[] tempNoise = new float[H * W];
-        float[] precipNoiseFact = new float[H * W];
-        float[] snowNoise = new float[H * W];
-
-        for (int r = 0; r < H; r++) {
-            for (int c = 0; c < W; c++) {
-                int idx = r * W + c;
-                float nx = j0 + c, ny = i0 + r;
-                float tnc = TEMP_NOISE.GetNoise(nx, ny);
-                float tnf = TEMP_NOISE_FINE.GetNoise(nx, ny);
-                tempNoise[idx] = 0.4f * tnc + 0.2f * tnf;
-
-                float pn = PRECIP_NOISE.GetNoise(nx, ny);
-                precipNoiseFact[idx] = 1.0f + 0.2f * pn;
-
-                float snc = SNOW_NOISE.GetNoise(nx, ny);
-                float snf = SNOW_NOISE_FINE.GetNoise(nx, ny);
-                snowNoise[idx] = 3.0f * snc + 2.0f * snf;
-            }
-        }
-
-        // Compute slope from padded elevation using Sobel (divide by pixelSizeM for ratio)
-        float[] slopeRatio = computeSlopeRatio(elevPadded, H, W, pixelSizeM);
+        int PW = W + 2;
+        float invPixelSize = 1.0f / pixelSizeM;
 
         // Process per-pixel
         for (int r = 0; r < H; r++) {
+            int row0 = r * PW;
+            int row1 = row0 + PW;
+            int row2 = row1 + PW;
+
             for (int c = 0; c < W; c++) {
                 int idx = r * W + c;
+
+                // Inline Perlin noise generation
+                float nx = j0 + c, ny = i0 + r;
+                float tnc = TEMP_NOISE.GetNoise(nx, ny);
+                float tnf = TEMP_NOISE_FINE.GetNoise(nx, ny);
+                float tempNoise = 0.4f * tnc + 0.2f * tnf;
+
+                float pn = PRECIP_NOISE.GetNoise(nx, ny);
+                float precipNoiseFact = 1.0f + 0.2f * pn;
+
+                float snc = SNOW_NOISE.GetNoise(nx, ny);
+                float snf = SNOW_NOISE_FINE.GetNoise(nx, ny);
+                float snowNoise = 3.0f * snc + 2.0f * snf;
+
+                // Inline slope ratio calculation (Sobel kernel)
+                float p00 = elevPadded[row0 + c];
+                float p01 = elevPadded[row0 + c + 1];
+                float p02 = elevPadded[row0 + c + 2];
+
+                float p10 = elevPadded[row1 + c];
+                // p11 is center, ignored by sobel
+                float p12 = elevPadded[row1 + c + 2];
+
+                float p20 = elevPadded[row2 + c];
+                float p21 = elevPadded[row2 + c + 1];
+                float p22 = elevPadded[row2 + c + 2];
+
+                float dx = (p02 - p00) + 2f * (p12 - p10) + (p22 - p20);
+                float dy = (p20 - p00) + 2f * (p21 - p01) + (p22 - p02);
+
+                dx *= 0.125f; // dx /= 8
+                dy *= 0.125f; // dy /= 8
+                float slope = (float) Math.sqrt(dx * dx + dy * dy) * invPixelSize;
+
                 float elevVal   = elev[idx];
                 float altM      = Math.max(0f, elevVal);
-                float slope     = slopeRatio[idx];
 
                 // Climate channels: [0]=temp, [1]=t_season, [2]=precip, [3]=p_cv
-                float temp     = climate[idx] + tempNoise[idx];
+                float temp     = climate[idx] + tempNoise;
                 float tSeason  = climate[H * W + idx];
-                float precip   = Math.max(0f, climate[2 * H * W + idx]) * precipNoiseFact[idx];
+                float precip   = Math.max(0f, climate[2 * H * W + idx]) * precipNoiseFact;
                 float pCV      = climate[3 * H * W + idx];
 
                 // Derived climate variables
@@ -151,7 +166,7 @@ public final class BiomeClassifier {
                 }
 
                 // Snow classification
-                float snowTemp = temp + snowNoise[idx];
+                float snowTemp = temp + snowNoise;
                 boolean isSteep = slope > 0.78f;
                 boolean hasSnow = snowTemp < 0f && precip > 150f && !isSteep;
 
@@ -228,40 +243,5 @@ public final class BiomeClassifier {
             }
         }
         return out;
-    }
-
-    private static float[] computeSlopeRatio(float[] elevPadded, int H, int W, float pixelSizeM) {
-        // Sobel kernels / 8 applied to (H+2, W+2) padded array → (H, W) output
-        float[] slope = new float[H * W];
-        int PW = W + 2;
-        float invPixelSize = 1.0f / pixelSizeM;
-        for (int r = 0; r < H; r++) {
-            int row0 = r * PW;
-            int row1 = row0 + PW;
-            int row2 = row1 + PW;
-            int outIdx = r * W;
-            for (int c = 0; c < W; c++) {
-                float p00 = elevPadded[row0 + c];
-                float p01 = elevPadded[row0 + c + 1];
-                float p02 = elevPadded[row0 + c + 2];
-
-                float p10 = elevPadded[row1 + c];
-                // p11 is center, ignored by sobel
-                float p12 = elevPadded[row1 + c + 2];
-
-                float p20 = elevPadded[row2 + c];
-                float p21 = elevPadded[row2 + c + 1];
-                float p22 = elevPadded[row2 + c + 2];
-
-                // Unrolled Sobel kernels to avoid inner loop overhead (~2.5x speedup)
-                float dx = (p02 - p00) + 2f * (p12 - p10) + (p22 - p20);
-                float dy = (p20 - p00) + 2f * (p21 - p01) + (p22 - p02);
-
-                dx *= 0.125f; // dx /= 8
-                dy *= 0.125f; // dy /= 8
-                slope[outIdx++] = (float) Math.sqrt(dx * dx + dy * dy) * invPixelSize;
-            }
-        }
-        return slope;
     }
 }
