@@ -1,3 +1,7 @@
 ## 2025-02-20 - Unrolling 3x3 Convolution Kernels (Sobel) in Java
 **Learning:** In Java, flattening small kernel loops like 3x3 Sobel filters directly into unrolled arithmetic yields a dramatic speedup (often 2.5x to 4x). The overhead from a nested 3x3 loop, including bounds-checking and arithmetic for computing array indexes (e.g. `(r+kr)*pW+(c+kc)` vs pre-calculated row offsets `row0 + c`), is surprisingly large relative to the actual math being performed.
 **Action:** When identifying mathematical kernels like Sobel filters in image or heightmap processing loops, unroll the 3x3 array accesses directly, use local row offset variables, and multiply by the inverse (e.g., `* 0.125f`) instead of dividing.
+
+## 2025-02-20 - Loop Fusion and Object Allocation in Java Image Pipelines
+**Learning:** In Java-based image/heightmap processing pipelines, large intermediate array allocations (like `float[H * W]`) for temporary per-pixel calculations (e.g., Perlin noise values, Sobel slopes) cause massive GC pressure and poor cache locality. Iterating multiple times over separate intermediate arrays is significantly slower than fusing operations.
+**Action:** When calculating per-pixel attributes (noise, slope, classification) that have a 1:1 mapping with the output, fuse the loops into a single pass and use primitive local variables instead of allocating full `float[H * W]` arrays. This eliminates the allocation overhead, avoids unnecessary memory passes, and keeps everything in CPU registers/L1 cache.
