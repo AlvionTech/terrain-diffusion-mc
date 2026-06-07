@@ -54,24 +54,55 @@ public final class LaplacianUtils {
     public static float[][] bilinearResize(float[][] src, int dstH, int dstW) {
         int srcH = src.length, srcW = src[0].length;
         float[][] dst = new float[dstH][dstW];
+
+        // ⚡ Bolt: Pre-calculate column indices and weights outside the inner loop
+        // to avoid repetitive float arithmetic and Math.floor calls in the hot loop.
+        int[] c0Arr = new int[dstW];
+        int[] c1Arr = new int[dstW];
+        float[] wcArr = new float[dstW];
+        float[] wc0Arr = new float[dstW];
+
+        for (int c = 0; c < dstW; c++) {
+            float srcC = ((c + 0.5f) * srcW / dstW) - 0.5f;
+            int c0 = (int) srcC;
+            if (srcC < 0 && srcC != c0) c0--; // ⚡ Bolt: Faster manual floor
+            int c1 = c0 + 1;
+
+            float wc = srcC - c0;
+            wcArr[c] = wc;
+            wc0Arr[c] = 1.0f - wc;
+
+            c0Arr[c] = Math.max(0, Math.min(srcW - 1, c0));
+            c1Arr[c] = Math.max(0, Math.min(srcW - 1, c1));
+        }
+
         for (int r = 0; r < dstH; r++) {
             float srcR = ((r + 0.5f) * srcH / dstH) - 0.5f;
-            int r0 = (int) Math.floor(srcR);
+            int r0 = (int) srcR;
+            if (srcR < 0 && srcR != r0) r0--; // ⚡ Bolt: Faster manual floor
             int r1 = r0 + 1;
+
             float wr = srcR - r0;
+            float wr0 = 1.0f - wr;
+
             r0 = Math.max(0, Math.min(srcH - 1, r0));
             r1 = Math.max(0, Math.min(srcH - 1, r1));
+
+            // ⚡ Bolt: Use direct 1D array references to avoid 2D lookups inside the column loop
+            float[] src_r0 = src[r0];
+            float[] src_r1 = src[r1];
+            float[] dst_r = dst[r];
+
             for (int c = 0; c < dstW; c++) {
-                float srcC = ((c + 0.5f) * srcW / dstW) - 0.5f;
-                int c0 = (int) Math.floor(srcC);
-                int c1 = c0 + 1;
-                float wc = srcC - c0;
-                c0 = Math.max(0, Math.min(srcW - 1, c0));
-                c1 = Math.max(0, Math.min(srcW - 1, c1));
-                dst[r][c] = (1 - wr) * (1 - wc) * src[r0][c0]
-                        + (1 - wr) * wc * src[r0][c1]
-                        + wr * (1 - wc) * src[r1][c0]
-                        + wr * wc * src[r1][c1];
+                int c0 = c0Arr[c];
+                int c1 = c1Arr[c];
+                float wc = wcArr[c];
+                float wc0 = wc0Arr[c];
+
+                dst_r[c] = wr0 * wc0 * src_r0[c0]
+                         + wr0 * wc * src_r0[c1]
+                         + wr * wc0 * src_r1[c0]
+                         + wr * wc * src_r1[c1];
             }
         }
         return dst;
@@ -141,26 +172,32 @@ public final class LaplacianUtils {
         // Horizontal pass
         float[][] tmp = new float[H][W];
         for (int r = 0; r < H; r++) {
+            // ⚡ Bolt: Use direct 1D array reference to avoid 2D lookups
+            float[] src_r = src[r];
+            float[] tmp_r = tmp[r];
             for (int c = 0; c < W; c++) {
                 float sum = 0;
                 for (int ki = 0; ki < ks; ki++) {
                     int cc = Math.max(0, Math.min(W - 1, c + ki - pad));
-                    sum += src[r][cc] * k[ki];
+                    sum += src_r[cc] * k[ki];
                 }
-                tmp[r][c] = sum;
+                tmp_r[c] = sum;
             }
         }
 
         // Vertical pass
         float[][] result = new float[H][W];
         for (int r = 0; r < H; r++) {
+            // ⚡ Bolt: Use direct 1D array reference to avoid 2D lookups
+            float[] result_r = result[r];
             for (int c = 0; c < W; c++) {
                 float sum = 0;
                 for (int ki = 0; ki < ks; ki++) {
                     int rr = Math.max(0, Math.min(H - 1, r + ki - pad));
+                    // Note: Vertical pass accesses `tmp[rr]` which changes per `ki`, so we can't fully pre-fetch `tmp_r` here.
                     sum += tmp[rr][c] * k[ki];
                 }
-                result[r][c] = sum;
+                result_r[c] = sum;
             }
         }
         return result;
