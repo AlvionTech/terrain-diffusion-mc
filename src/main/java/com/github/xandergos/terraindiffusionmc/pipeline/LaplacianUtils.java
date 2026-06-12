@@ -236,34 +236,57 @@ public final class LaplacianUtils {
         float fallbackBeta = -0.0065f;
         float betaMin = -0.012f, betaMax = 0.0f;
         float eps = 1e-6f;
+        int n = win * win;
+        int pad = (win - 1) / 2;
+        float thresholdN = fallbackThreshold * n;
 
         for (int r = 0; r < outH; r++) {
+            float[] res0Row = result[0][r];
+            float[] res1Row = result[1][r];
+            float[] tPadRow = T[r + pad];
+            float[] ePadRow = e[r + pad];
+
+            // Cache row references for the current window to avoid repeated 2D array lookups in the inner loops
+            float[][] winTRows = new float[win][];
+            float[][] winERows = new float[win][];
+            for (int dr = 0; dr < win; dr++) {
+                winTRows[dr] = T[r + dr];
+                winERows[dr] = e[r + dr];
+            }
+
             for (int c = 0; c < outW; c++) {
                 // Compute windowed weighted averages (weight = land mask = e > 0)
                 double muT = 0, muE = 0, muE2 = 0, muET = 0, sumW = 0;
-                int n = win * win;
                 for (int dr = 0; dr < win; dr++) {
+                    float[] tRow = winTRows[dr];
+                    float[] eRow = winERows[dr];
                     for (int dc = 0; dc < win; dc++) {
-                        float land = (e[r + dr][c + dc] > 0) ? 1.0f : 0.0f;
-                        muT += T[r + dr][c + dc] * land;
-                        muE += e[r + dr][c + dc] * land;
-                        muE2 += e[r + dr][c + dc] * e[r + dr][c + dc] * land;
-                        muET += e[r + dr][c + dc] * T[r + dr][c + dc] * land;
-                        sumW += land;
+                        float eVal = eRow[c + dc];
+                        if (eVal > 0) {
+                            float tVal = tRow[c + dc];
+                            muT += tVal;
+                            muE += eVal;
+                            muE2 += eVal * eVal;
+                            muET += eVal * tVal;
+                            sumW += 1.0;
+                        }
                     }
                 }
+
                 double den = sumW + eps;
                 muT /= den; muE /= den; muE2 /= den; muET /= den;
                 double varE = muE2 - muE * muE;
                 double covET = muET - muE * muT;
-                double beta = (varE < 1.0 || sumW < fallbackThreshold * n) ? fallbackBeta : (covET / (varE + eps));
-                beta = Math.max(betaMin, Math.min(betaMax, beta));
+                double beta = (varE < 1.0 || sumW < thresholdN) ? fallbackBeta : (covET / (varE + eps));
 
-                int pad = (win - 1) / 2;
-                float Tc = T[r + pad][c + pad];
-                float ec = e[r + pad][c + pad];
-                result[0][r][c] = (float) (Tc - beta * ec);
-                result[1][r][c] = (float) beta;
+                // Inline bounds checking instead of Math.max/min
+                if (beta < betaMin) beta = betaMin;
+                else if (beta > betaMax) beta = betaMax;
+
+                float Tc = tPadRow[c + pad];
+                float ec = ePadRow[c + pad];
+                res0Row[c] = (float) (Tc - beta * ec);
+                res1Row[c] = (float) beta;
             }
         }
         return result;
