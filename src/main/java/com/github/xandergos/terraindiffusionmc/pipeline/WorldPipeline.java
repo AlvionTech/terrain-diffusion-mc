@@ -570,24 +570,62 @@ public final class WorldPipeline implements AutoCloseable {
             centralCoarse[ch] = cropArray(full, cenPad, cenPad, cenH, cenW);
         }
 
+        // Pre-calculate horizontal coefficients for Bilinear upsample (Bolt Optimization)
+        int[] x0s = new int[W];
+        int[] x1s = new int[W];
+        float[] wxs = new float[W];
+        float[] invWxs = new float[W];
+
+        for (int c = 0; c < W; c++) {
+            float gridX = (j1 + c + 0.5f) / S - cj1 + 0.5f;
+            float x = Math.max(0f, Math.min(lW - 1f, gridX));
+            int x0 = (int) x;
+            int x1 = Math.min(lW - 1, x0 + 1);
+            float wx = x - x0;
+
+            x0s[c] = x0;
+            x1s[c] = x1;
+            wxs[c] = wx;
+            invWxs[c] = 1.0f - wx;
+        }
+
         // Bilinear upsample to native resolution
         float[] climate = new float[5 * H * W];
         for (int r = 0; r < H; r++) {
             // fractional index into lbt/centralCoarse arrays (matches Python's u = (ii+0.5)/S - ci1 + 0.5)
-            float gridY    = (i1 + r + 0.5f) / S - ci1 + 0.5f;
-            float cenGridY = gridY;
-            for (int c = 0; c < W; c++) {
-                float gridX    = (j1 + c + 0.5f) / S - cj1 + 0.5f;
-                float cenGridX = gridX;
+            float gridY = (i1 + r + 0.5f) / S - ci1 + 0.5f;
+            float y = Math.max(0f, Math.min(lH - 1f, gridY));
+            int y0 = (int) y;
+            int y1 = Math.min(lH - 1, y0 + 1);
+            float wy = y - y0;
+            float invWy = 1.0f - wy;
 
-                float tBase = bilinearSample2D(lbt[0], lH, lW, gridY, gridX);
-                float beta  = bilinearSample2D(lbt[1], lH, lW, gridY, gridX);
+            float[] lbt0_y0 = lbt[0][y0]; float[] lbt0_y1 = lbt[0][y1];
+            float[] lbt1_y0 = lbt[1][y0]; float[] lbt1_y1 = lbt[1][y1];
+            float[] cc3_y0 = centralCoarse[3][y0]; float[] cc3_y1 = centralCoarse[3][y1];
+            float[] cc4_y0 = centralCoarse[4][y0]; float[] cc4_y1 = centralCoarse[4][y1];
+            float[] cc5_y0 = centralCoarse[5][y0]; float[] cc5_y1 = centralCoarse[5][y1];
+
+            // Note: This optimization mathematically assumes lH == cenH and lW == cenW.
+            // If the padding/window size logic for lbt and centralCoarse ever diverge,
+            // x0, x1, y0, y1 bounds calculation must be decoupled.
+            for (int c = 0; c < W; c++) {
+                int x0 = x0s[c], x1 = x1s[c];
+                float wx = wxs[c], invWx = invWxs[c];
+
+                float w00 = invWy * invWx;
+                float w01 = invWy * wx;
+                float w10 = wy * invWx;
+                float w11 = wy * wx;
+
+                float tBase = w00 * lbt0_y0[x0] + w01 * lbt0_y0[x1] + w10 * lbt0_y1[x0] + w11 * lbt0_y1[x1];
+                float beta  = w00 * lbt1_y0[x0] + w01 * lbt1_y0[x1] + w10 * lbt1_y1[x0] + w11 * lbt1_y1[x1];
                 float tempReal = tBase + beta * Math.max(0f, elevFlat[r * W + c]);
 
                 climate[r * W + c]             = tempReal;
-                climate[H * W + r * W + c]     = bilinearSample2D(centralCoarse[3], cenH, cenW, cenGridY, cenGridX);
-                climate[2 * H * W + r * W + c] = bilinearSample2D(centralCoarse[4], cenH, cenW, cenGridY, cenGridX);
-                climate[3 * H * W + r * W + c] = bilinearSample2D(centralCoarse[5], cenH, cenW, cenGridY, cenGridX);
+                climate[H * W + r * W + c]     = w00 * cc3_y0[x0] + w01 * cc3_y0[x1] + w10 * cc3_y1[x0] + w11 * cc3_y1[x1];
+                climate[2 * H * W + r * W + c] = w00 * cc4_y0[x0] + w01 * cc4_y0[x1] + w10 * cc4_y1[x0] + w11 * cc4_y1[x1];
+                climate[3 * H * W + r * W + c] = w00 * cc5_y0[x0] + w01 * cc5_y0[x1] + w10 * cc5_y1[x0] + w11 * cc5_y1[x1];
                 climate[4 * H * W + r * W + c] = beta;
             }
         }
