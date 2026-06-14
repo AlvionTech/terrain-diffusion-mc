@@ -28,6 +28,7 @@ public final class SyntheticMapFactory {
 
     // Loaded from pipeline_data.json (data quantiles are seed-independent WorldClim distributions)
     private final float[][] noiseQuantiles;
+    private final float[][] invNoiseQuantilesDx;
     private final float[][] dataQuantiles;
     private final float aTempStd;
     private final float bTempStd;
@@ -54,6 +55,7 @@ public final class SyntheticMapFactory {
         this.tempStdP99 = cachedTempStdP99;
 
         this.noiseQuantiles = new float[N_CHANNELS][];
+        this.invNoiseQuantilesDx = new float[N_CHANNELS][];
         for (int ch = 0; ch < N_CHANNELS; ch++) {
             FastNoiseLite fnl = new FastNoiseLite((int) ((worldSeed + ch + 1) & 0x7FFFFFFFL));
             fnl.SetNoiseType(FastNoiseLite.NoiseType.Perlin);
@@ -63,7 +65,15 @@ public final class SyntheticMapFactory {
             fnl.SetFractalLacunarity(LACUNARITY);
             fnl.SetFractalGain(GAIN);
             noises[ch] = fnl;
-            this.noiseQuantiles[ch] = buildNoiseQuantiles(fnl, 64, 1e-4f);
+
+            float[] nq = buildNoiseQuantiles(fnl, 64, 1e-4f);
+            this.noiseQuantiles[ch] = nq;
+
+            float[] invDx = new float[nq.length - 1];
+            for (int i = 0; i < nq.length - 1; i++) {
+                invDx[i] = 1.0f / (nq[i + 1] - nq[i]);
+            }
+            this.invNoiseQuantilesDx[ch] = invDx;
         }
     }
 
@@ -141,70 +151,85 @@ public final class SyntheticMapFactory {
     public float[][][] sample(int x1, int y1, int x2, int y2) {
         int H = y2 - y1;
         int W = x2 - x1;
-        float[][] rawChannels = new float[N_CHANNELS][H * W];
 
-        // Sample each channel with quantile transform
-        for (int ch = 0; ch < N_CHANNELS; ch++) {
-            FastNoiseLite fnl = noises[ch];
-            float[] nq = noiseQuantiles[ch];
-            float[] dq = dataQuantiles[ch];
-            int k = 0;
-            // Python: noise is sampled at (Xs, Ys) where Xs = col (x1..x2) and Ys = row (y1..y2)
-            // meshgrid(x, y) with x=col-range, y=row-range → result[r][c] = noise(x1+c, y1+r)
-            for (int r = 0; r < H; r++) {
-                for (int c = 0; c < W; c++) {
-                    float noiseVal = fnl.GetNoise(x1 + c, y1 + r);
-                    rawChannels[ch][k++] = interp(noiseVal, nq, dq);
-                }
-            }
-        }
+        // Pre-fetch channel data arrays for inner loops
+        FastNoiseLite fnl0 = noises[0], fnl1 = noises[1], fnl2 = noises[2], fnl3 = noises[3], fnl4 = noises[4];
+        float[] nq0 = noiseQuantiles[0], dq0 = dataQuantiles[0], inv0 = invNoiseQuantilesDx[0];
+        float[] nq1 = noiseQuantiles[1], dq1 = dataQuantiles[1], inv1 = invNoiseQuantilesDx[1];
+        float[] nq2 = noiseQuantiles[2], dq2 = dataQuantiles[2], inv2 = invNoiseQuantilesDx[2];
+        float[] nq3 = noiseQuantiles[3], dq3 = dataQuantiles[3], inv3 = invNoiseQuantilesDx[3];
+        float[] nq4 = noiseQuantiles[4], dq4 = dataQuantiles[4], inv4 = invNoiseQuantilesDx[4];
 
-        // Reshape to [ch][H][W]
-        float[][] ch2d = new float[N_CHANNELS][H * W];
-        System.arraycopy(rawChannels[0], 0, ch2d[0], 0, H * W);
-        System.arraycopy(rawChannels[1], 0, ch2d[1], 0, H * W);
-        System.arraycopy(rawChannels[2], 0, ch2d[2], 0, H * W);
-        System.arraycopy(rawChannels[3], 0, ch2d[3], 0, H * W);
-        System.arraycopy(rawChannels[4], 0, ch2d[4], 0, H * W);
+        int n = noiseQuantiles[0].length;
+        float x0_0 = nq0[0], xn1_0 = nq0[n-1], f0_0 = dq0[0], fn1_0 = dq0[n-1];
+        float x0_1 = nq1[0], xn1_1 = nq1[n-1], f0_1 = dq1[0], fn1_1 = dq1[n-1];
+        float x0_2 = nq2[0], xn1_2 = nq2[n-1], f0_2 = dq2[0], fn1_2 = dq2[n-1];
+        float x0_3 = nq3[0], xn1_3 = nq3[n-1], f0_3 = dq3[0], fn1_3 = dq3[n-1];
+        float x0_4 = nq4[0], xn1_4 = nq4[n-1], f0_4 = dq4[0], fn1_4 = dq4[n-1];
 
-        // Post-process as per sample_full_synthetic_map
         float[][][] result = new float[N_CHANNELS][H][W];
+
         for (int r = 0; r < H; r++) {
+            float[] res0 = result[0][r];
+            float[] res1 = result[1][r];
+            float[] res2 = result[2][r];
+            float[] res3 = result[3][r];
+            float[] res4 = result[4][r];
+
             for (int c = 0; c < W; c++) {
-                int idx = r * W + c;
-                float elev = ch2d[0][idx];
-                float temp = ch2d[1][idx];
-                float tempStd = ch2d[2][idx];
-                float precip = ch2d[3][idx];
-                float precipStd = ch2d[4][idx];
+                int px = x1 + c;
+                int py = y1 + r;
+
+                // Fused quantile transform and noise generation per pixel
+                float elev = interpFast(fnl0.GetNoise(px, py), nq0, dq0, inv0, n, x0_0, xn1_0, f0_0, fn1_0);
+                float temp = interpFast(fnl1.GetNoise(px, py), nq1, dq1, inv1, n, x0_1, xn1_1, f0_1, fn1_1);
+                float tempStd = interpFast(fnl2.GetNoise(px, py), nq2, dq2, inv2, n, x0_2, xn1_2, f0_2, fn1_2);
+                float precip = interpFast(fnl3.GetNoise(px, py), nq3, dq3, inv3, n, x0_3, xn1_3, f0_3, fn1_3);
+                float precipStd = interpFast(fnl4.GetNoise(px, py), nq4, dq4, inv4, n, x0_4, xn1_4, f0_4, fn1_4);
 
                 // Temp: correct for lapse rate based on elevation
                 float lapseRate = -6.5f + 0.0015f * precip;
-                lapseRate = Math.max(-9.8f, Math.min(-4.0f, lapseRate)) / 1000.0f;
-                temp = temp + lapseRate * Math.max(0.0f, elev);
-                temp = Math.max(-10.0f, Math.min(40.0f, temp));
+                lapseRate = lapseRate < -9.8f ? -9.8f : (lapseRate > -4.0f ? -4.0f : lapseRate);
+                lapseRate /= 1000.0f;
+                temp = temp + lapseRate * (elev > 0.0f ? elev : 0.0f);
+                temp = temp < -10.0f ? -10.0f : (temp > 40.0f ? 40.0f : temp);
 
                 // Temp std correction
-                float baseline = (float) aTempStd * temp + bTempStd;
+                float baseline = aTempStd * temp + bTempStd;
                 float t01 = (tempStd - tempStdP1) / (tempStdP99 - tempStdP1);
-                float baselineClipped = Math.max(tempStdP1, -baseline);
+                float baselineClipped = tempStdP1 > -baseline ? tempStdP1 : -baseline;
                 tempStd = t01 * (tempStdP99 - baselineClipped) + baselineClipped + baseline;
-                tempStd = Math.max(tempStd, 20.0f);
+                tempStd = tempStd > 20.0f ? tempStd : 20.0f;
 
                 // Precip std correction
-                precipStd = precipStd * Math.max(0.0f, (185.0f - 0.04111f * precip) / 185.0f);
+                float pFactor = (185.0f - 0.04111f * precip) / 185.0f;
+                precipStd = precipStd * (pFactor > 0.0f ? pFactor : 0.0f);
 
                 // Elevation: signed sqrt transform
                 float elevSqrt = elev < 0 ? -(float)Math.sqrt(-elev) : (float)Math.sqrt(elev);
 
-                result[0][r][c] = elevSqrt;
-                result[1][r][c] = temp;
-                result[2][r][c] = tempStd;
-                result[3][r][c] = precip;
-                result[4][r][c] = precipStd;
+                res0[c] = elevSqrt;
+                res1[c] = temp;
+                res2[c] = tempStd;
+                res3[c] = precip;
+                res4[c] = precipStd;
             }
         }
         return result;
+    }
+
+    /** Fast linear interpolation using precomputed inverse dx. */
+    static float interpFast(float val, float[] xp, float[] fp, float[] invDx, int n, float x0, float xn1, float f0, float fn1) {
+        if (val <= x0) return f0;
+        if (val >= xn1) return fn1;
+        // Binary search for position
+        int lo = 0, hi = n - 1;
+        while (hi - lo > 1) {
+            int mid = (lo + hi) >>> 1;
+            if (xp[mid] <= val) lo = mid; else hi = mid;
+        }
+        float t = (val - xp[lo]) * invDx[lo];
+        return fp[lo] + t * (fp[hi] - fp[lo]);
     }
 
     /** Linear interpolation matching numpy's np.interp: clamp at boundaries. */
